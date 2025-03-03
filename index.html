@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Dot Battle</title>
+    <style>
+        #gameContainer {
+            width: 800px;
+            height: 600px;
+            border: 2px solid black;
+            position: relative;
+            margin: 20px auto;
+            overflow: hidden;
+        }
+
+        #playerDot {
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            background-color: red;
+            border-radius: 50%;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        .bullet {
+            position: absolute;
+            width: 8px;
+            height: 8px;
+            background-color: black;
+            border-radius: 50%;
+        }
+
+        .opponent {
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            background-color: purple;
+            border-radius: 50%;
+        }
+
+        .health-bar {
+            position: absolute;
+            top: 5px;
+            left: 5px;
+            width: 200px;
+            height: 10px;
+            background-color: #555;
+            border-radius: 2px;
+            overflow: hidden;
+            z-index: 1;
+        }
+
+        .health-fill {
+            height: 100%;
+            background-color: #0f0;
+            transition: width 0.3s ease;
+        }
+
+        .lives-bar {
+            position: absolute;
+            top: 20px;
+            left: 5px;
+            width: 200px;
+            height: 10px;
+            background-color: #555;
+            border-radius: 2px;
+            overflow: hidden;
+            z-index: 1;
+        }
+
+        .lives-fill {
+            height: 100%;
+            background-color: #a020f0;
+            transition: width 0.3s ease;
+        }
+
+        .ammo-bar {
+            position: absolute;
+            top: 35px;
+            left: 5px;
+            width: 200px;
+            height: 10px;
+            background-color: #555;
+            border-radius: 2px;
+            overflow: hidden;
+            z-index: 1;
+        }
+
+        .ammo-fill {
+            height: 100%;
+            background-color: #ffa500;
+            transition: width 0.3s ease;
+        }
+
+        #restartButton {
+            position: absolute;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 10px 20px;
+            font-size: 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            display: none; /* Hidden by default */
+        }
+
+        #restartButton:hover {
+            background-color: #45a049;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <div class="health-bar">
+            <div class="health-fill"></div>
+        </div>
+        <div class="lives-bar">
+            <div class="lives-fill"></div>
+        </div>
+        <div class="ammo-bar">
+            <div class="ammo-fill"></div>
+        </div>
+        <div id="playerDot"></div>
+        <button id="restartButton">Restart</button>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const container = document.getElementById('gameContainer');
+            const dot = document.getElementById('playerDot');
+            const healthFill = document.querySelector('.health-fill');
+            const livesFill = document.querySelector('.lives-fill');
+            const ammoFill = document.querySelector('.ammo-fill');
+            const restartButton = document.getElementById('restartButton');
+            
+            // Game state
+            let gameActive = true;
+            let currentRound = 0;
+            const bulletCounts = [25, 22, 18, 15, 13, 11, 10, 8, 7, 6, 5];
+            let maxAmmo = bulletCounts[currentRound];
+
+            // Player variables
+            let x = (container.clientWidth - dot.offsetWidth) / 2;
+            let y = (container.clientHeight - dot.offsetHeight) / 2;
+            const baseSpeed = 5;
+            let currentSpeed = baseSpeed;
+            const keysPressed = {};
+            let mouseX = 0;
+            let mouseY = 0;
+            const bullets = [];
+            
+            // Health system
+            let maxHealth = 5;
+            let currentHealth = maxHealth;
+            let isBoosting = false;
+            let rechargeTimeout = null;
+            let rechargeInterval = null;
+
+            // Opponent system
+            let opponent = null;
+            let opponentLives = 5;
+            let opponentSpeed = 3;
+            let opponentDirection = { x: 0, y: 0 };
+            let opponentInterval = null;
+
+            // Initialize game
+            startGame();
+
+            // Start a new game
+            function startGame() {
+                gameActive = true;
+                restartButton.style.display = 'none';
+                
+                // Reset player position
+                x = (container.clientWidth - dot.offsetWidth) / 2;
+                y = (container.clientHeight - dot.offsetHeight) / 2;
+                dot.style.left = `${x}px`;
+                dot.style.top = `${y}px`;
+                dot.style.display = 'block';
+                
+                // Reset game state
+                currentAmmo = maxAmmo;
+                updateAmmoBar();
+                currentHealth = maxHealth;
+                updateHealthBar();
+                opponentLives = 5;
+                updateLivesBar();
+                
+                // Clear existing bullets
+                bullets.forEach(b => b.element.remove());
+                bullets.length = 0;
+                
+                // Create new opponent
+                if (opponent) opponent.remove();
+                opponent = createOpponent();
+                
+                // Reset opponent movement
+                if (opponentInterval) clearInterval(opponentInterval);
+                opponentInterval = setInterval(changeOpponentDirection, 2000);
+                changeOpponentDirection();
+                
+                // Restart game loop
+                gameLoop();
+            }
+
+            // End the game
+            function endGame() {
+                gameActive = false;
+                restartButton.style.display = 'block';
+                dot.style.display = 'none';
+                if (opponent) opponent.remove();
+                opponent = null;
+                if (opponentInterval) clearInterval(opponentInterval);
+            }
+
+            // Restart button click
+            restartButton.addEventListener('click', () => {
+                if (!gameActive) {
+                    if (opponentLives <= 0) {
+                        // Player won the round, progress to next round
+                        currentRound = Math.min(currentRound + 1, bulletCounts.length - 1);
+                    } else {
+                        // Player lost the round, reset to 25 bullets
+                        currentRound = 0;
+                    }
+                    maxAmmo = bulletCounts[currentRound];
+                    startGame();
+                }
+            });
+
+            // Create opponent
+            function createOpponent() {
+                const opp = document.createElement('div');
+                opp.className = 'opponent';
+                container.appendChild(opp);
+                return opp;
+            }
+
+            // Update health bar
+            function updateHealthBar() {
+                const healthPercent = (currentHealth / maxHealth) * 100;
+                healthFill.style.width = `${healthPercent}%`;
+            }
+
+            // Update lives bar
+            function updateLivesBar() {
+                const livesPercent = (opponentLives / 5) * 100;
+                livesFill.style.width = `${livesPercent}%`;
+            }
+
+            // Update ammo bar
+            function updateAmmoBar() {
+                const ammoPercent = (currentAmmo / maxAmmo) * 100;
+                ammoFill.style.width = `${ammoPercent}%`;
+            }
+
+            // Stop boost
+            function stopBoost() {
+                if (isBoosting) {
+                    isBoosting = false;
+                    currentSpeed = baseSpeed;
+                    
+                    // Clear any existing recharge timers
+                    clearTimeout(rechargeTimeout);
+                    clearInterval(rechargeInterval);
+                    
+                    // Start recharge after 3 seconds
+                    rechargeTimeout = setTimeout(() => {
+                        rechargeInterval = setInterval(() => {
+                            if (currentHealth < maxHealth) {
+                                currentHealth = Math.min(currentHealth + 1, maxHealth);
+                                updateHealthBar();
+                            }
+                            if (currentHealth === maxHealth) {
+                                clearInterval(rechargeInterval);
+                            }
+                        }, 3000);
+                    }, 3000);
+                }
+            }
+
+            // Shoot bullet
+            function shootBullet() {
+                if (!gameActive || currentAmmo <= 0) return; // No ammo left or game over
+                
+                const bullet = document.createElement('div');
+                bullet.className = 'bullet';
+                container.appendChild(bullet);
+
+                const playerCenterX = x + dot.offsetWidth/2;
+                const playerCenterY = y + dot.offsetHeight/2;
+                const dx = mouseX - playerCenterX;
+                const dy = mouseY - playerCenterY;
+                const distance = Math.sqrt(dx*dx + dy*dy);
+                
+                bullets.push({
+                    element: bullet,
+                    x: playerCenterX - 4,
+                    y: playerCenterY - 4,
+                    vx: (dx/distance) * baseSpeed * 3,
+                    vy: (dy/distance) * baseSpeed * 3
+                });
+
+                // Reduce ammo
+                currentAmmo--;
+                updateAmmoBar();
+
+                // Check if ammo is depleted
+                if (currentAmmo <= 0) {
+                    endGame();
+                }
+            }
+
+            // Move opponent
+            function moveOpponent() {
+                if (!opponent) return;
+                
+                // Get current position
+                let oppX = parseFloat(opponent.style.left) || 0;
+                let oppY = parseFloat(opponent.style.top) || 0;
+                
+                // Update position with current direction
+                oppX += opponentDirection.x * opponentSpeed;
+                oppY += opponentDirection.y * opponentSpeed;
+
+                // Keep within bounds
+                oppX = Math.max(0, Math.min(oppX, container.clientWidth - 20));
+                oppY = Math.max(0, Math.min(oppY, container.clientHeight - 20));
+
+                opponent.style.left = `${oppX}px`;
+                opponent.style.top = `${oppY}px`;
+            }
+
+            // Change opponent direction
+            function changeOpponentDirection() {
+                if (!opponent) return;
+                
+                // Random direction vector
+                const angle = Math.random() * Math.PI * 2;
+                opponentDirection = {
+                    x: Math.cos(angle),
+                    y: Math.sin(angle)
+                };
+            }
+
+            // Check bullet collisions
+            function checkBulletCollisions() {
+                if (!opponent) return;
+                
+                const oppRect = opponent.getBoundingClientRect();
+                const containerRect = container.getBoundingClientRect();
+                
+                for (let i = bullets.length - 1; i >= 0; i--) {
+                    const bullet = bullets[i];
+                    const bulletRect = bullet.element.getBoundingClientRect();
+                    
+                    // Calculate positions relative to container
+                    const bulletX = bulletRect.left - containerRect.left;
+                    const bulletY = bulletRect.top - containerRect.top;
+                    const oppX = oppRect.left - containerRect.left;
+                    const oppY = oppRect.top - containerRect.top;
+                    
+                    // Simple circle collision detection
+                    const dx = (bulletX + 4) - (oppX + 10);
+                    const dy = (bulletY + 4) - (oppY + 10);
+                    const distance = Math.sqrt(dx*dx + dy*dy);
+                    
+                    if (distance < 14) { // 10 (opponent radius) + 4 (bullet radius)
+                        // Hit detected
+                        opponentLives--;
+                        updateLivesBar();
+                        bullet.element.remove();
+                        bullets.splice(i, 1);
+                        
+                        if (opponentLives <= 0) {
+                            endGame();
+                        }
+                    }
+                }
+            }
+
+            // Update bullets
+            function updateBullets() {
+                for (let i = bullets.length - 1; i >= 0; i--) {
+                    const bullet = bullets[i];
+                    bullet.x += bullet.vx;
+                    bullet.y += bullet.vy;
+
+                    if (bullet.x < 0 || bullet.x > container.clientWidth - 8 ||
+                        bullet.y < 0 || bullet.y > container.clientHeight - 8) {
+                        bullet.element.remove();
+                        bullets.splice(i, 1);
+                    } else {
+                        bullet.element.style.left = `${bullet.x}px`;
+                        bullet.element.style.top = `${bullet.y}px`;
+                    }
+                }
+            }
+
+            // Track mouse position
+            container.addEventListener('mousemove', (e) => {
+                const rect = container.getBoundingClientRect();
+                mouseX = e.clientX - rect.left;
+                mouseY = e.clientY - rect.top;
+            });
+
+            // Handle key presses
+            document.addEventListener('keydown', (e) => {
+                const key = e.key.toLowerCase();
+                if (['w', 'a', 's', 'd'].includes(key)) {
+                    keysPressed[key] = true;
+                    e.preventDefault();
+                }
+                if (key === 'l' && currentAmmo > 0) {
+                    shootBullet();
+                    e.preventDefault();
+                }
+                if (key === 'p' && currentHealth > 0 && !isBoosting) {
+                    isBoosting = true;
+                    currentSpeed = baseSpeed * 2;
+                    e.preventDefault();
+                }
+            });
+
+            document.addEventListener('keyup', (e) => {
+                const key = e.key.toLowerCase();
+                if (['w', 'a', 's', 'd'].includes(key)) {
+                    keysPressed[key] = false;
+                    e.preventDefault();
+                }
+                if (key === 'p') {
+                    stopBoost();
+                }
+            });
+
+            // Game loop
+            function gameLoop() {
+                if (!gameActive) return;
+
+                // Update health if boosting
+                if (isBoosting) {
+                    currentHealth = Math.max(currentHealth - (1/60), 0);
+                    updateHealthBar();
+                    
+                    if (currentHealth <= 0) {
+                        stopBoost();
+                    }
+                }
+
+                // Player movement
+                let moveX = 0;
+                let moveY = 0;
+                
+                if (keysPressed['a']) moveX -= 1;
+                if (keysPressed['d']) moveX += 1;
+                if (keysPressed['w']) moveY -= 1;
+                if (keysPressed['s']) moveY += 1;
+
+                if (moveX !== 0 && moveY !== 0) {
+                    moveX *= 0.7071;
+                    moveY *= 0.7071;
+                }
+
+                x += moveX * currentSpeed;
+                y += moveY * currentSpeed;
+
+                x = Math.max(0, Math.min(x, container.clientWidth - dot.offsetWidth));
+                y = Math.max(0, Math.min(y, container.clientHeight - dot.offsetHeight));
+
+                dot.style.left = `${x}px`;
+                dot.style.top = `${y}px`;
+
+                // Move opponent
+                moveOpponent();
+                
+                // Check bullet collisions
+                checkBulletCollisions();
+
+                // Update bullets
+                updateBullets();
+
+                requestAnimationFrame(gameLoop);
+            }
+        });
+    </script>
+</body>
+</html>
